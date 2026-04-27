@@ -6,3 +6,4 @@ lxml>=5.2.0
 schedule>=1.2.0
 sentence-transformers>=3.0.0
 numpy>=1.26.0
+pytest>=8.0.0
