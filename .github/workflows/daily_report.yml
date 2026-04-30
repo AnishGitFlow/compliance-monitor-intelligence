@@ -2,9 +2,9 @@ name: Daily Compliance Report
 
 on:
   schedule:
-    # Runs every day at 02:30 UTC
-    # (08:00 AM IST)
-    - cron: '30 2 * * *'
+  # Runs every day at 23:30 UTC
+  # (05:00 AM IST)
+  - cron: '30 23 * * *'
 
   workflow_dispatch:
 
