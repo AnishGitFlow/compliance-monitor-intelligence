@@ -1,6 +1,6 @@
 """
 config.py - Central configuration for the Indian AMC/AIF/PMS Compliance Signal Monitor
-Updated to remove the SERPER API query restriction.
+Updated to use OpenRouter instead of Gemini for LLM enrichment.
 """
 
 import os
@@ -9,9 +9,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── API Keys ─────────────────────────────────────────────────────────────────────
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL   = os.getenv("GEMINI_MODEL", "gemini-2.0-flash-lite")
+SERPER_API_KEY      = os.getenv("SERPER_API_KEY", "")
+OPENROUTER_API_KEY  = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+# Free-model fallback chain (tried in order via OpenRouter's route=fallback)
+OPENROUTER_MODELS = [
+    os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free"),
+    "deepseek/deepseek-v4-flash:free",
+    "z-ai/glm-4.5-air:free",
+    "openrouter/free",
+]
 
 # ── Email Delivery (Microsoft 365 / Outlook) ─────────────────────────────────────
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.office365.com")
@@ -29,7 +37,7 @@ SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "08:00")  # 24-hr IST
 # If you later want throttling again, set a numeric value like 5 or 10.
 DAILY_QUERY_LIMIT = None
 
-# Gemini processing limits
+# LLM processing limits
 TOP_POSTS_FOR_LLM = 5
 MAX_CHARS_FOR_LLM = 700
 
@@ -66,12 +74,6 @@ TARGET_CONCEPTS = {
         "Concerns about audit readiness, internal or external audits, gaps in compliance "
         "frameworks, risk controls, exception management, or operational risk in Indian "
         "investment management firms including AMC, AIF, PMS."
-    ),
-
-    "Hiring and Team Expansion": (
-        "A company building or expanding its compliance, legal, risk, or operations team. "
-        "Includes hiring for Compliance Head, Chief Compliance Officer, Risk Officer, "
-        "Legal Counsel, or operations roles inside Indian AMC, AIF, PMS, or wealth firms."
     ),
 
     "Transformation and Modernization": (
@@ -119,12 +121,6 @@ EXCLUDE_KEYWORDS = [
     "speaking at",
     "register now",
 
-    # Spam / low-intent hiring
-    "walk-in interview",
-    "mass hiring",
-    "certificate course",
-    "training program",
-
     # Generic engagement bait
     "like and share",
     "subscribe now",
@@ -141,16 +137,6 @@ HIGH_PRIORITY_COMPANIES = [
 
 MEDIUM_PRIORITY_COMPANIES = [
     "fintech", "investment advisory", "wealthtech", "capital markets",
-]
-
-# ==============================================================================
-# SENIORITY FILTER
-# ==============================================================================
-
-SENIOR_TITLES = [
-    "cxo", "ceo", "cfo", "coo", "cto", "cro", "chief",
-    "founder", "co-founder", "director", "managing director",
-    "vp", "vice president", "head", "principal", "partner",
 ]
 
 # ==============================================================================
@@ -202,16 +188,6 @@ SEARCH_QUERIES = [
     "AI for compliance operations BFSI",
     "operational efficiency compliance teams",
     "compliance process automation PMS",
-
-    # --------------------------------------------------------------------------
-    # Hiring + Organizational Signals
-    # --------------------------------------------------------------------------
-    "hiring chief compliance officer India",
-    "head of compliance AMC hiring",
-    "risk officer wealth management India",
-    "compliance operations hiring BFSI",
-    "expanding compliance team AMC",
-    "legal and compliance hiring AIF",
 
     # --------------------------------------------------------------------------
     # Business Growth Triggers

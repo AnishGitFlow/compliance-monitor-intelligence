@@ -19,7 +19,6 @@ from config import (
     SERPER_API_KEY,
     SEARCH_QUERIES,
     DAILY_QUERY_LIMIT,
-    SENIOR_TITLES,
     INDIA_HARD_SIGNALS,
     HIGH_PRIORITY_COMPANIES,
     MEDIUM_PRIORITY_COMPANIES,
@@ -80,10 +79,6 @@ def classify_company_type(company: str) -> str:
     if any(k in low for k in HIGH_PRIORITY_COMPANIES):   return "High Priority"
     if any(k in low for k in MEDIUM_PRIORITY_COMPANIES): return "Medium Priority"
     return "Other"
-
-
-def is_senior_leader(title: str) -> bool:
-    return any(t in title.lower() for t in SENIOR_TITLES)
 
 
 def extract_hashtags(text: str) -> list[str]:
@@ -278,7 +273,6 @@ def _parse_serper_result(result: dict) -> dict | None:
         "title":                "",
         "company":              "",
         "company_type":         "Other",
-        "is_senior":            False,
         "content":              content,
         "post_url":             post_url,
         "post_date":            post_date,

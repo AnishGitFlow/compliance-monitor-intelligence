@@ -38,7 +38,6 @@ CAT_COLORS = {
     "Opinion / Commentary":     "#7c3aed",
     "Risk Alert":               "#dc2626",
     "Product / Solution Insight":"#059669",
-    "Hiring / Talent":          "#db2777",
     "Thought Leadership":       "#0f172a",
     "Case Study":               "#475569",
     "Event / Webinar":          "#2563eb",
@@ -211,7 +210,7 @@ def _build_html(report: dict) -> str:
                     Unsubscribe or Manage Alerts in your config.
                 </p>
                 <div style="margin-top:16px;">
-                    <span style="font-size:10px; background:#e2e8f0; padding:4px 8px; border-radius:4px; color:{COLORS['text_muted']};">Powered by Serper API & Gemini</span>
+                    <span style="font-size:10px; background:#e2e8f0; padding:4px 8px; border-radius:4px; color:{COLORS['text_muted']};">Powered by Serper API &amp; OpenRouter</span>
                 </div>
             </div>
         </div>

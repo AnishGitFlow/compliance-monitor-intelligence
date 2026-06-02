@@ -1,36 +1,35 @@
 """
-enricher.py - Optimised AI enrichment using Google Gemini with rule-based fallback.
+enricher.py - AI enrichment using OpenRouter (OpenAI-compatible) with rule-based fallback.
 
 Token-saving pipeline:
   1. Sort posts by signal score (highest first)
-  2. Only top TOP_POSTS_FOR_LLM posts are eligible for Gemini
-  3. Each post must score >= MIN_SIGNAL_SCORE to reach Gemini
-  4. Post content is truncated to MAX_CHARS_FOR_LLM before the Gemini call
+  2. Only top TOP_POSTS_FOR_LLM posts are eligible for LLM enrichment
+  3. Each post must score >= MIN_SIGNAL_SCORE to reach the LLM
+  4. Post content is truncated to MAX_CHARS_FOR_LLM before the LLM call
   5. Minimal JSON prompt is used (< 50 tokens of instructions)
-  6. 5-second delay between Gemini calls to respect free-tier rate limits
+  6. 5-second delay between LLM calls to respect free-tier rate limits
   7. All other posts fall back to fast rule-based enrichment
+  8. Model fallback chain: tries each free model in order if one fails
 """
 import json
 import re
 import time
 
 from config import (
-    GEMINI_API_KEY, GEMINI_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODELS,
     TOP_POSTS_FOR_LLM, MAX_CHARS_FOR_LLM, SEMANTIC_THRESHOLD,
 )
 
-# ── Gemini client (optional) ────────────────────────────────────────────────────
+# ── OpenRouter client (optional) ────────────────────────────────────────────────
 try:
-    from google import genai
-    from google.genai import types as genai_types
+    from openai import OpenAI
     _client = (
-        genai.Client(api_key=GEMINI_API_KEY)
-        if GEMINI_API_KEY and GEMINI_API_KEY not in ("", "your_gemini_api_key_here")
+        OpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+        if OPENROUTER_API_KEY and OPENROUTER_API_KEY not in ("", "your_openrouter_api_key_here")
         else None
     )
 except Exception:
     _client = None
-    genai_types = None
 
 # ── Constants ────────────────────────────────────────────────────────────────────
 POST_CATEGORIES = [
@@ -38,7 +37,6 @@ POST_CATEGORIES = [
     "Opinion / Commentary",
     "Risk Alert",
     "Product / Solution Insight",
-    "Hiring / Talent",
     "Thought Leadership",
     "Case Study",
     "Event / Webinar",
@@ -51,8 +49,8 @@ REGULATOR_ENTITIES = [
     "FATF", "BIS", "Basel Committee", "DPDP", "PMLA", "NHB", "IFSCA", "AMFI",
 ]
 
-# ── Minimal Gemini prompt (keeps token usage extremely low) ──────────────────────
-_GEMINI_PROMPT = """\
+# ── Minimal LLM prompt (keeps token usage extremely low) ─────────────────────────
+_LLM_PROMPT = """\
 Classify this LinkedIn post from India's AMC/AIF/PMS/wealth sector.
 
 Return ONLY valid JSON, no markdown:
@@ -67,36 +65,48 @@ POST:
 {content}"""
 
 
-# ── Gemini enrichment ────────────────────────────────────────────────────────────
+# ── OpenRouter LLM enrichment ────────────────────────────────────────────────────
 
-def _gemini_enrich(content: str) -> dict | None:
-    """Call Gemini with a truncated post and minimal prompt. Returns None on failure."""
+def _llm_enrich(content: str) -> dict | None:
+    """
+    Call OpenRouter with a truncated post and minimal prompt.
+    Uses a free-model fallback chain: tries each model in OPENROUTER_MODELS
+    in order, returning the first successful result.
+    Returns None if all models fail.
+    """
     if not _client:
         return None
 
     clean_text = content[:MAX_CHARS_FOR_LLM]
-    prompt = _GEMINI_PROMPT.format(
+    prompt = _LLM_PROMPT.format(
         categories=", ".join(POST_CATEGORIES),
         tones=", ".join(TONE_LABELS),
         content=clean_text,
     )
-    try:
-        response = _client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(temperature=0.1),
-        )
-        text = response.text.strip()
-        # Strip code fences if present
-        text = re.sub(r"^```json\s*", "", text)
-        text = re.sub(r"```$", "", text).strip()
-        data = json.loads(text)
-        # Validate expected keys
-        required = {"category", "tone", "regulators_mentioned", "summary"}
-        if required.issubset(data.keys()):
-            return data
-    except Exception as e:
-        print(f"  [Enricher] Gemini failed: {e}")
+
+    for model in OPENROUTER_MODELS:
+        try:
+            response = _client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            text = response.choices[0].message.content.strip()
+            # Strip code fences if present
+            text = re.sub(r"^```json\s*", "", text)
+            text = re.sub(r"```$", "", text).strip()
+            data = json.loads(text)
+            # Validate expected keys
+            required = {"category", "tone", "regulators_mentioned", "summary"}
+            if required.issubset(data.keys()):
+                used_model = getattr(response, "model", model)
+                print(f"    [LLM] Model used: {used_model}")
+                return data
+        except Exception as e:
+            print(f"  [LLM] Model {model!r} failed: {e}")
+            continue  # try next model in fallback chain
+
+    print("  [LLM] All models in fallback chain failed — using rule-based.")
     return None
 
 
@@ -150,15 +160,15 @@ def _rule_based_enrich(content: str) -> dict:
 
 # ── Public API ───────────────────────────────────────────────────────────────────
 
-def enrich_post(post: dict, use_gemini: bool = False) -> dict:
+def enrich_post(post: dict, use_llm: bool = False) -> dict:
     """
     Enrich a single post.
-    If use_gemini=True, attempt Gemini first; fall back to rule-based on failure.
-    If use_gemini=False, use rule-based only (no API call).
+    If use_llm=True, attempt OpenRouter LLM first; fall back to rule-based on failure.
+    If use_llm=False, use rule-based only (no API call).
     """
     content = post.get("content", "")
-    if use_gemini:
-        data = _gemini_enrich(content) or _rule_based_enrich(content)
+    if use_llm:
+        data = _llm_enrich(content) or _rule_based_enrich(content)
     else:
         data = _rule_based_enrich(content)
     return {**post, **data}
@@ -168,7 +178,7 @@ def enrich_batch(posts: list[dict]) -> list[dict]:
     """
     Token-optimised batch enrichment:
       1. Sort by signal score (desc)
-      2. Top TOP_POSTS_FOR_LLM posts scoring >= MIN_SIGNAL_SCORE go to Gemini
+      2. Top TOP_POSTS_FOR_LLM posts scoring >= SEMANTIC_THRESHOLD go to LLM
          (with 5-second rate-limit delay between calls)
       3. All remaining posts are rule-based only
     """
@@ -178,43 +188,43 @@ def enrich_batch(posts: list[dict]) -> list[dict]:
     # Sort highest-signal posts first
     sorted_posts = sorted(posts, key=lambda p: p.get("score", 0), reverse=True)
 
-    # Posts with semantic score >= SEMANTIC_THRESHOLD qualify for Gemini
+    # Posts with semantic score >= SEMANTIC_THRESHOLD qualify for LLM
     # (score is 0.0–1.0 from the embedding model)
-    gemini_candidates = [
+    llm_candidates = [
         p for p in sorted_posts
         if p.get("score", 0.0) >= SEMANTIC_THRESHOLD
     ][:TOP_POSTS_FOR_LLM]
 
-    gemini_ids = {p["id"] for p in gemini_candidates}
+    llm_ids = {p["id"] for p in llm_candidates}
 
-    gemini_count  = len(gemini_candidates)
-    fallback_count = len(posts) - gemini_count
+    llm_count      = len(llm_candidates)
+    fallback_count = len(posts) - llm_count
 
-    print(f"[Enricher] {gemini_count} posts → Gemini  |  {fallback_count} posts → rule-based")
-    if gemini_count == 0:
+    print(f"[Enricher] {llm_count} posts → LLM  |  {fallback_count} posts → rule-based")
+    if llm_count == 0:
         print(f"[Enricher] No posts met SEMANTIC_THRESHOLD={SEMANTIC_THRESHOLD}. All rule-based.")
 
     enriched: list[dict] = []
-    gemini_call_n = 0
+    llm_call_n = 0
 
     for post in sorted_posts:
-        use_gemini = post["id"] in gemini_ids
+        use_llm = post["id"] in llm_ids
 
         try:
-            name = post.get("author_name", "Unknown")
-            tag  = "Gemini" if use_gemini else "rule"
+            name  = post.get("author_name", "Unknown")
+            tag   = "LLM" if use_llm else "rule"
             score = post.get("score", 0)
             print(f"  [Enricher] [{tag}] score={score}  {name}")
         except UnicodeEncodeError:
-            print(f"  [Enricher] [{'Gemini' if use_gemini else 'rule'}] [Non-ASCII Name]")
+            print(f"  [Enricher] [{'LLM' if use_llm else 'rule'}] [Non-ASCII Name]")
 
-        if use_gemini:
-            gemini_call_n += 1
-            if gemini_call_n > 1:
-                # Rate-limit: 5-second pause between Gemini calls
+        if use_llm:
+            llm_call_n += 1
+            if llm_call_n > 1:
+                # Rate-limit: 5-second pause between LLM calls
                 print(f"  [Enricher] Sleeping 5s (rate limit)...")
                 time.sleep(5)
 
-        enriched.append(enrich_post(post, use_gemini=use_gemini))
+        enriched.append(enrich_post(post, use_llm=use_llm))
 
     return enriched
